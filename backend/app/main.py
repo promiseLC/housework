@@ -21,3 +21,6 @@ app.include_router(households.router, prefix="/api/v1")
 
 from app.api import chores
 app.include_router(chores.router, prefix="/api/v1")
+
+from app.api import payments
+app.include_router(payments.router, prefix="/api/v1")
