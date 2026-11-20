@@ -1,9 +1,10 @@
-from fastapi import Depends, Header
+from fastapi import Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.exc import IntegrityError, OperationalError
 from app.core.db import engine
 from app.core.security import authenticate
 from app.core.errors import fail
+
 
 def connection():
     try:
@@ -21,7 +22,23 @@ def connection():
             fail("CONFLICT", "并发操作冲突，请使用原幂等键重试")
         raise
 
+
 bearer = HTTPBearer(auto_error=False)
 
-def current_user(conn=Depends(connection), credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
-    return authenticate(conn, "Bearer " + credentials.credentials if credentials else None)
+
+def current_user(
+    conn=Depends(connection),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+):
+    return authenticate(
+        conn, "Bearer " + credentials.credentials if credentials else None
+    )
+
+
+def readonly_connection():
+    with engine.connect() as conn:
+        conn.exec_driver_sql("SET TRANSACTION READ ONLY")
+        try:
+            yield conn
+        finally:
+            conn.rollback()

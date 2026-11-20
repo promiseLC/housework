@@ -6,6 +6,7 @@ from sqlalchemy import inspect, text
 def test_healthz_and_error_envelope():
     assert importlib.util.find_spec("app.main"), "FastAPI app missing"
     from app.main import app
+
     with TestClient(app) as client:
         assert client.get("/healthz").json() == {"status": "ok"}
         r = client.get("/does-not-exist")
@@ -16,13 +17,38 @@ def test_healthz_and_error_envelope():
 def test_real_mysql_schema():
     assert importlib.util.find_spec("app.core.db"), "MySQL schema missing"
     from app.core.db import engine
+
     assert engine.dialect.name == "mysql"
     with engine.connect() as c:
         assert c.scalar(text("SELECT VERSION()"))
         cols = c.execute(text("SHOW CREATE TABLE household_members")).one()[1]
         assert "active_user_id" in cols and "GENERATED ALWAYS" in cols
     i = inspect(engine)
-    assert any(u["column_names"] == ["task_id"] for u in i.get_unique_constraints("wage_entries"))
+    assert any(
+        u["column_names"] == ["task_id"]
+        for u in i.get_unique_constraints("wage_entries")
+    )
     keys = i.get_unique_constraints("payment_items")
     assert any(u["column_names"] == ["payment_id", "wage_entry_id"] for u in keys)
     assert not any(u["column_names"] == ["wage_entry_id"] for u in keys)
+
+
+def test_preview_connection_enforces_mysql_read_only_transaction():
+    import pytest
+    import app.core.dependencies as deps
+
+    assert hasattr(deps, "readonly_connection"), (
+        "Read-only MySQL transaction dependency missing"
+    )
+    from sqlalchemy.exc import OperationalError
+
+    reader = deps.readonly_connection()
+    conn = next(reader)
+    try:
+        with pytest.raises(OperationalError) as error:
+            conn.execute(
+                text("UPDATE payments SET status='rejected' WHERE id='nonexistent'")
+            )
+        assert error.value.orig.args[0] == 1792
+    finally:
+        reader.close()

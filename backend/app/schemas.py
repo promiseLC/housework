@@ -2,57 +2,80 @@
 from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
 
 class ContractModel(BaseModel):
-    @field_validator('*', mode='after')
+    @field_validator("*", mode="after")
     @classmethod
     def utc_datetimes(cls, value):
-        return value.replace(tzinfo=timezone.utc) if isinstance(value, datetime) and value.tzinfo is None else value
-    @field_validator('username', mode='before', check_fields=False)
+        return (
+            value.replace(tzinfo=timezone.utc)
+            if isinstance(value, datetime) and value.tzinfo is None
+            else value
+        )
+
+    @field_validator(
+        "username", "display_name", "name", "reason", mode="before", check_fields=False
+    )
     @classmethod
-    def trim_username(cls, value):
+    def trim_text(cls, value):
         return value.strip() if isinstance(value, str) else value
+
 
 class ErrorDetail(ContractModel):
     code: str = Field(...)
     message: str = Field(...)
     details: dict = Field(None)
 
+
 class ErrorResponse(ContractModel):
     error: ErrorDetail = Field(...)
 
+
 class RegisterRequest(ContractModel):
-    username: str = Field(..., min_length=2, max_length=32, pattern='^[A-Za-z0-9_\\u4e00-\\u9fff]{2,32}$')
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(
+        ..., min_length=2, max_length=32, pattern="^[A-Za-z0-9_\\u4e00-\\u9fff]{2,32}$"
+    )
     password: str = Field(..., min_length=8, max_length=72)
     display_name: str = Field(..., min_length=1, max_length=20)
 
+
 class LoginRequest(ContractModel):
+    model_config = ConfigDict(extra="forbid")
     username: str = Field(..., min_length=2, max_length=32)
     password: str = Field(...)
 
+
 class RefreshRequest(ContractModel):
+    model_config = ConfigDict(extra="forbid")
     refresh_token: str = Field(...)
+
 
 class UserPublic(ContractModel):
     id: UUID = Field(...)
     username: str = Field(...)
     display_name: str = Field(...)
 
+
 class AuthTokenResponse(ContractModel):
     access_token: str = Field(...)
     refresh_token: str = Field(...)
-    token_type: Literal['bearer'] = Field(...)
+    token_type: Literal["bearer"] = Field(...)
     expires_in: int = Field(..., strict=True)
     user: UserPublic = Field(...)
 
-HouseholdStatus = Literal['active', 'dissolved']
+
+HouseholdStatus = Literal["active", "dissolved"]
+
 
 class HouseholdMember(ContractModel):
     user_id: UUID = Field(...)
     display_name: str = Field(...)
     joined_at: datetime = Field(...)
     left_at: datetime | None = Field(None)
+
 
 class HouseholdSummary(ContractModel):
     id: UUID = Field(...)
@@ -61,28 +84,35 @@ class HouseholdSummary(ContractModel):
     dissolved_at: datetime | None = Field(None)
     members: list[HouseholdMember] = Field(...)
 
+
 class MeResponse(ContractModel):
     user: UserPublic = Field(...)
     active_household: HouseholdSummary | None = Field(...)
+
 
 class InviteCreatedResponse(ContractModel):
     id: UUID = Field(...)
     code: str = Field(...)
     expires_at: datetime = Field(...)
-    status: Literal['pending'] = Field(...)
+    status: Literal["pending"] = Field(...)
+
 
 class InvitePublic(ContractModel):
     id: UUID = Field(...)
     code: str | None = Field(None)
-    status: Literal['pending', 'accepted', 'expired', 'cancelled'] = Field(...)
+    status: Literal["pending", "accepted", "expired", "cancelled"] = Field(...)
     expires_at: datetime = Field(...)
     created_at: datetime = Field(...)
+
 
 class InviteStatusResponse(ContractModel):
     invite: InvitePublic | None = Field(...)
 
+
 class AcceptInviteRequest(ContractModel):
+    model_config = ConfigDict(extra="forbid")
     code: str = Field(..., min_length=6, max_length=16)
+
 
 class HouseholdDetail(ContractModel):
     id: UUID = Field(...)
@@ -91,16 +121,22 @@ class HouseholdDetail(ContractModel):
     dissolved_at: datetime | None = Field(None)
     members: list[HouseholdMember] = Field(...)
 
+
 class HouseholdListResponse(ContractModel):
     items: list[HouseholdSummary] = Field(...)
 
+
 class ChoreTypeWriteRequest(ContractModel):
+    model_config = ConfigDict(extra="forbid")
     name: str = Field(..., min_length=1, max_length=40)
     unit_price_fen: int = Field(..., le=100000000, ge=1, strict=True)
 
+
 class ChoreTypePatchRequest(ContractModel):
+    model_config = ConfigDict(extra="forbid")
     name: str = Field(None, min_length=1, max_length=40)
     unit_price_fen: int = Field(None, le=100000000, ge=1, strict=True)
+
 
 class ChoreType(ContractModel):
     id: UUID = Field(...)
@@ -111,21 +147,32 @@ class ChoreType(ContractModel):
     created_at: datetime = Field(...)
     updated_at: datetime = Field(...)
 
+
 class ChoreTypeListResponse(ContractModel):
     items: list[ChoreType] = Field(...)
 
+
 class StartTaskRequest(ContractModel):
+    model_config = ConfigDict(extra="forbid")
     chore_type_id: UUID = Field(...)
 
+
 class SubmitTaskRequest(ContractModel):
+    model_config = ConfigDict(extra="forbid")
     note: str = Field(None, max_length=200)
 
+
 class RejectRequest(ContractModel):
+    model_config = ConfigDict(extra="forbid")
     reason: str = Field(..., min_length=1, max_length=200)
 
-TaskStatus = Literal['in_progress', 'pending_confirm', 'rejected', 'confirmed', 'cancelled']
 
-WageStatus = Literal['payable', 'awaiting_receipt', 'settled']
+TaskStatus = Literal[
+    "in_progress", "pending_confirm", "rejected", "confirmed", "cancelled"
+]
+
+WageStatus = Literal["payable", "awaiting_receipt", "settled"]
+
 
 class Wage(ContractModel):
     id: UUID = Field(...)
@@ -139,6 +186,7 @@ class Wage(ContractModel):
     locked_payment_id: UUID | None = Field(None)
     created_at: datetime = Field(...)
     settled_at: datetime | None = Field(None)
+
 
 class Task(ContractModel):
     id: UUID = Field(...)
@@ -159,13 +207,15 @@ class Task(ContractModel):
     version: int = Field(..., strict=True)
     wage: Wage | None = Field(None)
 
+
 class TaskReviewEvent(ContractModel):
     id: UUID = Field(...)
     task_id: UUID = Field(...)
     actor_user_id: UUID = Field(...)
-    action: Literal['submit', 'withdraw', 'confirm', 'reject'] = Field(...)
+    action: Literal["submit", "withdraw", "confirm", "reject"] = Field(...)
     reason: str | None = Field(None)
     created_at: datetime = Field(...)
+
 
 class TaskDetail(ContractModel):
     id: UUID = Field(...)
@@ -187,11 +237,13 @@ class TaskDetail(ContractModel):
     wage: Wage | None = Field(None)
     review_events: list[TaskReviewEvent] = Field(...)
 
+
 class TaskListResponse(ContractModel):
     items: list[Task] = Field(...)
     page: int = Field(..., strict=True)
     page_size: int = Field(..., strict=True)
     total: int = Field(..., strict=True)
+
 
 class WageListResponse(ContractModel):
     items: list[Wage] = Field(...)
@@ -199,14 +251,18 @@ class WageListResponse(ContractModel):
     page_size: int = Field(..., strict=True)
     total: int = Field(..., strict=True)
 
+
 class CreatePaymentRequest(ContractModel):
+    model_config = ConfigDict(extra="forbid")
     wage_ids: list[UUID] = Field(..., min_length=1)
+
 
 class PaymentItem(ContractModel):
     wage_id: UUID = Field(...)
     amount_fen: int = Field(..., strict=True)
     chore_name: str = Field(None)
     task_id: UUID = Field(None)
+
 
 class PaymentPreview(ContractModel):
     payer: UserPublic = Field(...)
@@ -215,7 +271,9 @@ class PaymentPreview(ContractModel):
     total_amount_fen: int = Field(..., strict=True)
     wage_count: int = Field(..., strict=True)
 
-PaymentStatus = Literal['awaiting_receipt', 'settled', 'rejected']
+
+PaymentStatus = Literal["awaiting_receipt", "settled", "rejected"]
+
 
 class Payment(ContractModel):
     id: UUID = Field(...)
@@ -229,6 +287,7 @@ class Payment(ContractModel):
     settled_at: datetime | None = Field(None)
     rejected_at: datetime | None = Field(None)
     created_at: datetime = Field(...)
+
 
 class PaymentDetail(ContractModel):
     id: UUID = Field(...)
@@ -244,11 +303,13 @@ class PaymentDetail(ContractModel):
     created_at: datetime = Field(...)
     items: list[PaymentItem] = Field(...)
 
+
 class PaymentListResponse(ContractModel):
     items: list[Payment] = Field(...)
     page: int = Field(..., strict=True)
     page_size: int = Field(..., strict=True)
     total: int = Field(..., strict=True)
+
 
 class LedgerSummary(ContractModel):
     household_id: UUID = Field(...)
@@ -264,4 +325,3 @@ class LedgerSummary(ContractModel):
     awaiting_partner_receipt_fen: int = Field(..., strict=True)
     settled_to_me_fen: int = Field(..., strict=True)
     settled_by_me_fen: int = Field(..., strict=True)
-
