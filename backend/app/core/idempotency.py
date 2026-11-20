@@ -1,13 +1,14 @@
 import hashlib
 import json
 from sqlalchemy import select, update
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.dialects.mysql import insert
 from app import models as m
 from app.core.errors import fail
 from app.core.security import now
 from app.core.store import wire
 
-def execute(conn, user, key, method, path, body, status, operation):
+def _once(conn, user, key, method, path, body, status, operation):
     if not key or not 8 <= len(key) <= 64:
         fail("VALIDATION_ERROR", "Idempotency-Key 必须为8到64字符", 422)
     hashed = hashlib.sha256(json.dumps(wire(body), sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
@@ -24,3 +25,15 @@ def execute(conn, user, key, method, path, body, status, operation):
     result=wire(operation())
     conn.execute(update(t).where(cond).values(response_status=status, response_body=result))
     return result
+
+def execute(conn, user, key, method, path, body, status, operation):
+    # InnoDB may deadlock while a duplicate PK contender holds an FK shared
+    # users lock and the winning invitation needs that users row exclusively.
+    # Retry the ENTIRE transaction (never just the failed SQL statement).
+    for attempt in range(3):
+        try:
+            return _once(conn, user, key, method, path, body, status, operation)
+        except OperationalError as exc:
+            if exc.orig.args[0] not in (1205, 1213) or attempt == 2:
+                raise
+            conn.rollback()

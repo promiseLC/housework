@@ -2,6 +2,8 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Header, Query, Request
 from sqlalchemy import select, func
 from app import models as m, schemas as s
+from app.core.types import UUIDString
+from app.core.responses import ERRORS
 from app.core.dependencies import connection, current_user
 from app.core.errors import fail
 from app.core.store import add, one, change, audit, household, resource
@@ -9,7 +11,7 @@ from app.core.security import now
 from app.core.idempotency import execute
 from app.presenters import task_view
 
-router=APIRouter(prefix="/households/{householdId}")
+router=APIRouter(prefix="/households/{householdId}",responses=ERRORS)
 
 def paginate(conn, table, conditions, page, page_size, presenter=dict):
     query=select(table).where(*conditions)
@@ -19,14 +21,14 @@ def paginate(conn, table, conditions, page, page_size, presenter=dict):
     return {"items": [presenter(row) for row in rows], "page":page, "page_size":page_size, "total":total}
 
 @router.get("/chore-types", response_model=s.ChoreTypeListResponse, operation_id="listChoreTypes")
-def list_types(householdId: str, include_inactive: bool=False, conn=Depends(connection), user=Depends(current_user)):
+def list_types(householdId: UUIDString, include_inactive: bool=False, conn=Depends(connection), user=Depends(current_user)):
     household(conn, user["id"], householdId)
     q=select(m.chore_types).where(m.chore_types.c.household_id == householdId)
     if not include_inactive: q=q.where(m.chore_types.c.is_active.is_(True))
     return {"items":conn.execute(q.order_by(m.chore_types.c.created_at, m.chore_types.c.id)).mappings().all()}
 
 @router.post("/chore-types", status_code=201, response_model=s.ChoreType, operation_id="createChoreType")
-def create_type(householdId: str, body:s.ChoreTypeWriteRequest, request:Request, conn=Depends(connection), user=Depends(current_user), key:str|None=Header(None, alias="Idempotency-Key")):
+def create_type(householdId: UUIDString, body:s.ChoreTypeWriteRequest, request:Request, conn=Depends(connection), user=Depends(current_user), key:str=Header(..., alias="Idempotency-Key", min_length=8, max_length=64)):
     def operation():
         household(conn, user["id"], householdId, True)
         row=add(conn, m.chore_types, household_id=householdId, name=body.name, unit_price_fen=body.unit_price_fen, is_active=True, created_by_user_id=user["id"], created_at=now(), updated_at=now())
@@ -35,7 +37,7 @@ def create_type(householdId: str, body:s.ChoreTypeWriteRequest, request:Request,
     return execute(conn,user,key,"POST",request.url.path,body.model_dump(mode="json"),201,operation)
 
 @router.patch("/chore-types/{choreTypeId}", response_model=s.ChoreType, operation_id="updateChoreType")
-def update_type(householdId:str,choreTypeId:str,body:s.ChoreTypePatchRequest,conn=Depends(connection),user=Depends(current_user)):
+def update_type(householdId:UUIDString,choreTypeId:UUIDString,body:s.ChoreTypePatchRequest,conn=Depends(connection),user=Depends(current_user)):
     household(conn,user["id"],householdId,True)
     resource(conn,m.chore_types,householdId,choreTypeId,True)
     fields=body.model_dump(exclude_unset=True)
@@ -45,7 +47,7 @@ def update_type(householdId:str,choreTypeId:str,body:s.ChoreTypePatchRequest,con
     return row
 
 @router.post("/chore-types/{choreTypeId}/deactivate", response_model=s.ChoreType, operation_id="deactivateChoreType")
-def deactivate(householdId:str,choreTypeId:str,request:Request,conn=Depends(connection),user=Depends(current_user),key:str|None=Header(None,alias="Idempotency-Key")):
+def deactivate(householdId:UUIDString,choreTypeId:UUIDString,request:Request,conn=Depends(connection),user=Depends(current_user),key:str=Header(...,alias="Idempotency-Key",min_length=8,max_length=64)):
     def operation():
         household(conn,user["id"],householdId,True)
         resource(conn,m.chore_types,householdId,choreTypeId,True)
@@ -55,7 +57,7 @@ def deactivate(householdId:str,choreTypeId:str,request:Request,conn=Depends(conn
     return execute(conn,user,key,"POST",request.url.path,None,200,operation)
 
 @router.post("/tasks", status_code=201, response_model=s.Task, operation_id="startTask")
-def start(householdId:str,body:s.StartTaskRequest,request:Request,conn=Depends(connection),user=Depends(current_user),key:str|None=Header(None,alias="Idempotency-Key")):
+def start(householdId:UUIDString,body:s.StartTaskRequest,request:Request,conn=Depends(connection),user=Depends(current_user),key:str=Header(...,alias="Idempotency-Key",min_length=8,max_length=64)):
     def operation():
         household(conn,user["id"],householdId,True)
         chore=resource(conn,m.chore_types,householdId,str(body.chore_type_id),True)
@@ -67,7 +69,7 @@ def start(householdId:str,body:s.StartTaskRequest,request:Request,conn=Depends(c
     return execute(conn,user,key,"POST",request.url.path,body.model_dump(mode="json"),201,operation)
 
 @router.get("/tasks",response_model=s.TaskListResponse,operation_id="listTasks")
-def list_tasks(householdId:str,status:s.TaskStatus|None=None,role:Literal["worker","reviewer"]|None=None,page:int=Query(1,ge=1),page_size:int=Query(20,ge=1,le=100),conn=Depends(connection),user=Depends(current_user)):
+def list_tasks(householdId:UUIDString,status:s.TaskStatus|None=None,role:Literal["worker","reviewer"]|None=None,page:int=Query(1,ge=1),page_size:int=Query(20,ge=1,le=100),conn=Depends(connection),user=Depends(current_user)):
     household(conn,user["id"],householdId)
     cond=[m.chore_tasks.c.household_id==householdId]
     if status:cond.append(m.chore_tasks.c.status==status)
@@ -75,7 +77,7 @@ def list_tasks(householdId:str,status:s.TaskStatus|None=None,role:Literal["worke
     return paginate(conn,m.chore_tasks,cond,page,page_size,lambda row:task_view(conn,row))
 
 @router.get("/tasks/{taskId}",response_model=s.TaskDetail,operation_id="getTask")
-def get_task(householdId:str,taskId:str,conn=Depends(connection),user=Depends(current_user)):
+def get_task(householdId:UUIDString,taskId:UUIDString,conn=Depends(connection),user=Depends(current_user)):
     household(conn,user["id"],householdId)
     return task_view(conn,resource(conn,m.chore_tasks,householdId,taskId),True)
 
@@ -101,15 +103,15 @@ def transition(conn,user,hid,tid,action,body=None):
     return task_view(conn,row,True)
 
 @router.post("/tasks/{taskId}/submit",response_model=s.TaskDetail,operation_id="submitTask")
-def submit(householdId:str,taskId:str,request:Request,body:s.SubmitTaskRequest|None=None,conn=Depends(connection),user=Depends(current_user),key:str|None=Header(None,alias="Idempotency-Key")):
+def submit(householdId:UUIDString,taskId:UUIDString,request:Request,body:s.SubmitTaskRequest|None=None,conn=Depends(connection),user=Depends(current_user),key:str=Header(...,alias="Idempotency-Key",min_length=8,max_length=64)):
     return execute(conn,user,key,"POST",request.url.path,body.model_dump(mode="json") if body else None,200,lambda:transition(conn,user,householdId,taskId,"submit",body))
 
 @router.post("/tasks/{taskId}/reject",response_model=s.TaskDetail,operation_id="rejectTask")
-def reject(householdId:str,taskId:str,body:s.RejectRequest,request:Request,conn=Depends(connection),user=Depends(current_user),key:str|None=Header(None,alias="Idempotency-Key")):
+def reject(householdId:UUIDString,taskId:UUIDString,body:s.RejectRequest,request:Request,conn=Depends(connection),user=Depends(current_user),key:str=Header(...,alias="Idempotency-Key",min_length=8,max_length=64)):
     return execute(conn,user,key,"POST",request.url.path,body.model_dump(mode="json"),200,lambda:transition(conn,user,householdId,taskId,"reject",body))
 
 def register_action(action,operation_id,model):
-    def endpoint(householdId:str,taskId:str,request:Request,conn=Depends(connection),user=Depends(current_user),key:str|None=Header(None,alias="Idempotency-Key")):
+    def endpoint(householdId:UUIDString,taskId:UUIDString,request:Request,conn=Depends(connection),user=Depends(current_user),key:str=Header(...,alias="Idempotency-Key",min_length=8,max_length=64)):
         return execute(conn,user,key,"POST",request.url.path,None,200,lambda:transition(conn,user,householdId,taskId,action))
     router.add_api_route("/tasks/{taskId}/"+action,endpoint,methods=["POST"],response_model=model,operation_id=operation_id)
 

@@ -23,6 +23,11 @@ def typ(s):
     if "allOf" in s and len(s["allOf"]) == 1:
         return typ(s["allOf"][0])
     if "enum" in s: return "Literal[" + ", ".join(repr(x) for x in s["enum"]) + "]"
+    if s.get("type") == "object" and "properties" in s:
+        n="ErrorDetail"
+        if n not in schemas: schemas[n]=s
+        emit(n)
+        return n
     t=s.get("type", "object")
     if t == "string": return {"uuid": "UUID", "date-time": "datetime"}.get(s.get("format"), "str")
     if t == "array": return "list[" + typ(s["items"]) + "]"
@@ -37,7 +42,7 @@ def emit(name):
     for key, value in s.get("properties", {}).items():
         t=typ(value)
         optional=key not in s.get("required", [])
-        if value.get("nullable") or optional: t += " | None"
+        if value.get("nullable"): t += " | None"
         args=[]
         for source,target in [("minLength","min_length"),("maxLength","max_length"),("minItems","min_length"),("maximum","le"),("minimum","ge"),("pattern","pattern")]:
             if source in value: args.append(target + "=" + repr(value[source]))
@@ -46,5 +51,5 @@ def emit(name):
         fields.append("    " + key + ": " + t + " = Field(" + ", ".join([default]+args) + ")")
     lines.extend(["class " + name + "(ContractModel):"] + (fields or ["    pass"]) + [""])
     done.add(name)
-for name in schemas: emit(name)
+for name in list(schemas): emit(name)
 (root / "backend/app/schemas.py").write_text("\n".join(lines) + "\n")

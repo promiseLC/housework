@@ -2,6 +2,8 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Header, Query, Request
 from sqlalchemy import select, update, text
 from app import models as m, schemas as s
+from app.core.types import UUIDString
+from app.core.responses import ERRORS
 from app.core.dependencies import connection,current_user
 from app.core.errors import fail
 from app.core.store import add,one,change,audit,household,resource,public
@@ -10,7 +12,7 @@ from app.core.idempotency import execute
 from app.presenters import wage_view,payment_view,payment_items_view
 from app.api.chores import paginate
 
-router=APIRouter(prefix="/households/{householdId}")
+router=APIRouter(prefix="/households/{householdId}",responses=ERRORS)
 
 def selection(conn,user,hid,ids,lock=False):
     ids=[str(x) for x in ids]
@@ -28,7 +30,7 @@ def selection(conn,user,hid,ids,lock=False):
     return rows
 
 @router.get("/wages",response_model=s.WageListResponse,operation_id="listWages")
-def list_wages(householdId:str,status:s.WageStatus|None=None,direction:Literal["receivable","payable"]|None=None,page:int=Query(1,ge=1),page_size:int=Query(20,ge=1,le=100),conn=Depends(connection),user=Depends(current_user)):
+def list_wages(householdId:UUIDString,status:s.WageStatus|None=None,direction:Literal["receivable","payable"]|None=None,page:int=Query(1,ge=1),page_size:int=Query(20,ge=1,le=100),conn=Depends(connection),user=Depends(current_user)):
     household(conn,user["id"],householdId)
     cond=[m.wage_entries.c.household_id==householdId]
     if status:cond.append(m.wage_entries.c.status==status)
@@ -36,12 +38,12 @@ def list_wages(householdId:str,status:s.WageStatus|None=None,direction:Literal["
     return paginate(conn,m.wage_entries,cond,page,page_size,lambda row:wage_view(conn,row))
 
 @router.get("/wages/{wageId}",response_model=s.Wage,operation_id="getWage")
-def get_wage(householdId:str,wageId:str,conn=Depends(connection),user=Depends(current_user)):
+def get_wage(householdId:UUIDString,wageId:UUIDString,conn=Depends(connection),user=Depends(current_user)):
     household(conn,user["id"],householdId)
     return wage_view(conn,resource(conn,m.wage_entries,householdId,wageId))
 
 @router.post("/payments/preview",response_model=s.PaymentPreview,operation_id="previewPayment")
-def preview(householdId:str,body:s.CreatePaymentRequest,conn=Depends(connection),user=Depends(current_user)):
+def preview(householdId:UUIDString,body:s.CreatePaymentRequest,conn=Depends(connection),user=Depends(current_user)):
     # No row locks, no audit/idempotency writes: preview is advisory only.
     household(conn,user["id"],householdId,False)
     h=one(conn,m.households,m.households.c.id==householdId)
@@ -50,7 +52,7 @@ def preview(householdId:str,body:s.CreatePaymentRequest,conn=Depends(connection)
     return {"payer":public(user),"payee":public(one(conn,m.users,m.users.c.id==rows[0]["worker_user_id"])),"items":payment_items_view(conn,[{"wage_entry_id":r["id"],"amount_fen":r["amount_fen"]} for r in rows]),"total_amount_fen":sum(r["amount_fen"] for r in rows),"wage_count":len(rows)}
 
 @router.post("/payments",status_code=201,response_model=s.PaymentDetail,operation_id="createPayment")
-def create_payment(householdId:str,body:s.CreatePaymentRequest,request:Request,conn=Depends(connection),user=Depends(current_user),key:str|None=Header(None,alias="Idempotency-Key")):
+def create_payment(householdId:UUIDString,body:s.CreatePaymentRequest,request:Request,conn=Depends(connection),user=Depends(current_user),key:str=Header(...,alias="Idempotency-Key",min_length=8,max_length=64)):
     def operation():
         household(conn,user["id"],householdId,True)
         rows=selection(conn,user,householdId,body.wage_ids,True)
@@ -63,14 +65,14 @@ def create_payment(householdId:str,body:s.CreatePaymentRequest,request:Request,c
     return execute(conn,user,key,"POST",request.url.path,body.model_dump(mode="json"),201,operation)
 
 @router.get("/payments",response_model=s.PaymentListResponse,operation_id="listPayments")
-def list_payments(householdId:str,status:s.PaymentStatus|None=None,page:int=Query(1,ge=1),page_size:int=Query(20,ge=1,le=100),conn=Depends(connection),user=Depends(current_user)):
+def list_payments(householdId:UUIDString,status:s.PaymentStatus|None=None,page:int=Query(1,ge=1),page_size:int=Query(20,ge=1,le=100),conn=Depends(connection),user=Depends(current_user)):
     household(conn,user["id"],householdId)
     cond=[m.payments.c.household_id==householdId]
     if status:cond.append(m.payments.c.status==status)
     return paginate(conn,m.payments,cond,page,page_size)
 
 @router.get("/payments/{paymentId}",response_model=s.PaymentDetail,operation_id="getPayment")
-def get_payment(householdId:str,paymentId:str,conn=Depends(connection),user=Depends(current_user)):
+def get_payment(householdId:UUIDString,paymentId:UUIDString,conn=Depends(connection),user=Depends(current_user)):
     household(conn,user["id"],householdId)
     return payment_view(conn,resource(conn,m.payments,householdId,paymentId))
 
@@ -93,15 +95,15 @@ def receipt(conn,user,hid,pid,reason=None):
     return payment_view(conn,payment)
 
 @router.post("/payments/{paymentId}/confirm-received",response_model=s.PaymentDetail,operation_id="confirmPaymentReceived")
-def confirm_received(householdId:str,paymentId:str,request:Request,conn=Depends(connection),user=Depends(current_user),key:str|None=Header(None,alias="Idempotency-Key")):
+def confirm_received(householdId:UUIDString,paymentId:UUIDString,request:Request,conn=Depends(connection),user=Depends(current_user),key:str=Header(...,alias="Idempotency-Key",min_length=8,max_length=64)):
     return execute(conn,user,key,"POST",request.url.path,None,200,lambda:receipt(conn,user,householdId,paymentId))
 
 @router.post("/payments/{paymentId}/reject-received",response_model=s.PaymentDetail,operation_id="rejectPaymentReceived")
-def reject_received(householdId:str,paymentId:str,body:s.RejectRequest,request:Request,conn=Depends(connection),user=Depends(current_user),key:str|None=Header(None,alias="Idempotency-Key")):
+def reject_received(householdId:UUIDString,paymentId:UUIDString,body:s.RejectRequest,request:Request,conn=Depends(connection),user=Depends(current_user),key:str=Header(...,alias="Idempotency-Key",min_length=8,max_length=64)):
     return execute(conn,user,key,"POST",request.url.path,body.model_dump(mode="json"),200,lambda:receipt(conn,user,householdId,paymentId,body.reason))
 
 @router.get("/ledger/summary",response_model=s.LedgerSummary,operation_id="getLedgerSummary")
-def summary(householdId:str,conn=Depends(connection),user=Depends(current_user)):
+def summary(householdId:UUIDString,conn=Depends(connection),user=Depends(current_user)):
     h=household(conn,user["id"],householdId)
     uid=user["id"]
     partner=conn.scalar(select(m.household_members.c.user_id).where((m.household_members.c.household_id==householdId)&(m.household_members.c.user_id!=uid)))

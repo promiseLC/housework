@@ -14,8 +14,13 @@ class ContractModel(BaseModel):
     def trim_username(cls, value):
         return value.strip() if isinstance(value, str) else value
 
+class ErrorDetail(ContractModel):
+    code: str = Field(...)
+    message: str = Field(...)
+    details: dict = Field(None)
+
 class ErrorResponse(ContractModel):
-    error: dict = Field(...)
+    error: ErrorDetail = Field(...)
 
 class RegisterRequest(ContractModel):
     username: str = Field(..., min_length=2, max_length=32, pattern='^[A-Za-z0-9_\\u4e00-\\u9fff]{2,32}$')
@@ -94,8 +99,8 @@ class ChoreTypeWriteRequest(ContractModel):
     unit_price_fen: int = Field(..., le=100000000, ge=1, strict=True)
 
 class ChoreTypePatchRequest(ContractModel):
-    name: str | None = Field(None, min_length=1, max_length=40)
-    unit_price_fen: int | None = Field(None, le=100000000, ge=1, strict=True)
+    name: str = Field(None, min_length=1, max_length=40)
+    unit_price_fen: int = Field(None, le=100000000, ge=1, strict=True)
 
 class ChoreType(ContractModel):
     id: UUID = Field(...)
@@ -113,7 +118,7 @@ class StartTaskRequest(ContractModel):
     chore_type_id: UUID = Field(...)
 
 class SubmitTaskRequest(ContractModel):
-    note: str | None = Field(None, max_length=200)
+    note: str = Field(None, max_length=200)
 
 class RejectRequest(ContractModel):
     reason: str = Field(..., min_length=1, max_length=200)
@@ -126,7 +131,7 @@ class Wage(ContractModel):
     id: UUID = Field(...)
     household_id: UUID = Field(...)
     task_id: UUID = Field(...)
-    chore_name: str | None = Field(None)
+    chore_name: str = Field(None)
     amount_fen: int = Field(..., strict=True)
     worker_user_id: UUID = Field(...)
     payer_user_id: UUID = Field(...)
@@ -200,8 +205,8 @@ class CreatePaymentRequest(ContractModel):
 class PaymentItem(ContractModel):
     wage_id: UUID = Field(...)
     amount_fen: int = Field(..., strict=True)
-    chore_name: str | None = Field(None)
-    task_id: UUID | None = Field(None)
+    chore_name: str = Field(None)
+    task_id: UUID = Field(None)
 
 class PaymentPreview(ContractModel):
     payer: UserPublic = Field(...)
@@ -252,7 +257,7 @@ class LedgerSummary(ContractModel):
     partner: UserPublic | None = Field(...)
     pending_confirm_as_reviewer_count: int = Field(..., strict=True)
     pending_confirm_as_worker_count: int = Field(..., strict=True)
-    in_progress_count: int | None = Field(None, strict=True)
+    in_progress_count: int = Field(None, strict=True)
     payable_to_me_fen: int = Field(..., strict=True)
     payable_by_me_fen: int = Field(..., strict=True)
     awaiting_my_receipt_fen: int = Field(..., strict=True)

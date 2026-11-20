@@ -3,13 +3,15 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends, Header, Request, Response
 from sqlalchemy import select, update
 from app import models as m, schemas as s
+from app.core.types import UUIDString
+from app.core.responses import ERRORS
 from app.core.dependencies import connection, current_user
 from app.core.security import now, digest
 from app.core.store import add, one, change, audit, active_membership, household, household_view
 from app.core.idempotency import execute
 from app.core.errors import fail
 
-router=APIRouter()
+router=APIRouter(responses=ERRORS)
 
 def lock_users(conn, ids):
     conn.execute(select(m.users.c.id).where(m.users.c.id.in_(ids)).order_by(m.users.c.id).with_for_update()).all()
@@ -39,11 +41,11 @@ def make_invite(conn, user, regenerate=False):
     return row
 
 @router.post("/invites", status_code=201, response_model=s.InviteCreatedResponse, operation_id="createInvite")
-def create_invite(request: Request, conn=Depends(connection), user=Depends(current_user), key: str | None = Header(None, alias="Idempotency-Key")):
+def create_invite(request: Request, conn=Depends(connection), user=Depends(current_user), key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=64)):
     return execute(conn, user, key, "POST", request.url.path, None, 201, lambda: make_invite(conn, user))
 
 @router.post("/invites/regenerate", status_code=201, response_model=s.InviteCreatedResponse, operation_id="regenerateInvite")
-def regenerate_invite(request: Request, conn=Depends(connection), user=Depends(current_user), key: str | None = Header(None, alias="Idempotency-Key")):
+def regenerate_invite(request: Request, conn=Depends(connection), user=Depends(current_user), key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=64)):
     return execute(conn, user, key, "POST", request.url.path, None, 201, lambda: make_invite(conn, user, True))
 
 @router.get("/invites/current", response_model=s.InviteStatusResponse, operation_id="getCurrentInvite")
@@ -62,7 +64,7 @@ def cancel_current(conn=Depends(connection), user=Depends(current_user)):
     return Response(status_code=204)
 
 @router.post("/invites/accept", status_code=201, response_model=s.HouseholdDetail, operation_id="acceptInvite")
-def accept_invite(body: s.AcceptInviteRequest, request: Request, conn=Depends(connection), user=Depends(current_user), key: str | None = Header(None, alias="Idempotency-Key")):
+def accept_invite(body: s.AcceptInviteRequest, request: Request, conn=Depends(connection), user=Depends(current_user), key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=64)):
     def operation():
         inv=one(conn, m.household_invites, m.household_invites.c.code_hash == digest(body.code))
         if not inv: fail("NOT_FOUND", "邀请码不存在", 404)
@@ -89,11 +91,11 @@ def list_households(conn=Depends(connection), user=Depends(current_user)):
     return {"items": [household_view(conn, h) for h in rows]}
 
 @router.get("/households/{householdId}", response_model=s.HouseholdDetail, operation_id="getHousehold")
-def get_household(householdId: str, conn=Depends(connection), user=Depends(current_user)):
+def get_household(householdId: UUIDString, conn=Depends(connection), user=Depends(current_user)):
     return household_view(conn, household(conn, user["id"], householdId))
 
 @router.post("/households/{householdId}/unbind", response_model=s.HouseholdDetail, operation_id="unbindHousehold")
-def unbind(householdId: str, request: Request, conn=Depends(connection), user=Depends(current_user), key: str | None = Header(None, alias="Idempotency-Key")):
+def unbind(householdId: UUIDString, request: Request, conn=Depends(connection), user=Depends(current_user), key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=64)):
     def operation():
         h=household(conn, user["id"], householdId, True)
         blocked=one(conn, m.chore_tasks, (m.chore_tasks.c.household_id == householdId) & m.chore_tasks.c.status.in_(["in_progress", "pending_confirm", "rejected"]))

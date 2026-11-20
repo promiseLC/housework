@@ -2,12 +2,14 @@ from fastapi import APIRouter, Depends, Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from app import models as m, schemas as s
+from app.core.types import UUIDString
+from app.core.responses import ERRORS
 from app.core.dependencies import connection, current_user
 from app.core.security import hasher, check_password, tokens, digest, now
 from app.core.store import add, one, change, active_membership, household_view
 from app.core.errors import fail
 
-router=APIRouter()
+router=APIRouter(responses=ERRORS)
 
 @router.post("/auth/register", status_code=201, response_model=s.AuthTokenResponse, operation_id="register")
 def register(body: s.RegisterRequest, conn=Depends(connection)):
