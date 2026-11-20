@@ -77,7 +77,9 @@ def make_invite(conn, user, regenerate=False):
     if regenerate:
         if not old:
             fail("CONFLICT", "没有有效邀请，请创建邀请码")
-        change(conn, m.household_invites, old["id"], status="cancelled", code=None)
+        old = change(
+            conn, m.household_invites, old["id"], status="cancelled", code=None
+        )
         audit(conn, user, "invite.cancel", old)
     elif old:
         fail("CONFLICT", "已有有效邀请，请查看或重新生成")
@@ -161,7 +163,9 @@ def cancel_current(conn=Depends(connection), user=Depends(current_user)):
     expire(conn, user["id"])
     old = pending(conn, user["id"])
     if old:
-        change(conn, m.household_invites, old["id"], status="cancelled", code=None)
+        old = change(
+            conn, m.household_invites, old["id"], status="cancelled", code=None
+        )
         audit(conn, user, "invite.cancel", old)
     return Response(status_code=204)
 
@@ -225,7 +229,7 @@ def accept_invite(
                 user_id=uid,
                 joined_at=now(),
             )
-        change(
+        inv = change(
             conn,
             m.household_invites,
             inv["id"],

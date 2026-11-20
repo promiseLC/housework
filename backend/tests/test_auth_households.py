@@ -241,3 +241,17 @@ def test_idempotency_compares_raw_json_even_on_bodyless_post(register):
         409,
         "IDEMPOTENCY_CONFLICT",
     )
+
+
+def test_invite_audit_snapshot_matches_committed_status(register):
+    a = register()
+    inv = a.post("/invites").json()
+    a.delete("/invites/current")
+    with engine.connect() as c:
+        payload = c.scalar(
+            select(m.audit_logs.c.payload_json).where(
+                (m.audit_logs.c.entity_id == inv["id"])
+                & (m.audit_logs.c.action == "invite.cancel")
+            )
+        )
+        assert payload["status"] == "cancelled"
