@@ -18,3 +18,6 @@ from app.api import auth, households
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["GET", "POST", "PATCH", "DELETE"], allow_headers=["Authorization", "Content-Type", "Idempotency-Key"])
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(households.router, prefix="/api/v1")
+
+from app.api import chores
+app.include_router(chores.router, prefix="/api/v1")
