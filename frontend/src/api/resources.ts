@@ -14,7 +14,6 @@ import type {
   PaymentPreview,
   TaskDetail,
   TaskListResponse,
-  Wage,
   WageListResponse,
 } from './types'
 

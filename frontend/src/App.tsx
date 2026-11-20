@@ -1,8 +1,30 @@
+import { BrowserRouter } from 'react-router-dom'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { useState } from 'react'
+import { SessionProvider } from './auth/SessionProvider'
+import { BootGate } from './routes/guards'
+import { AppRoutes } from './routes/router'
+
+export function createAppQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 10_000 },
+      mutations: { retry: false },
+    },
+  })
+}
+
 export default function App() {
+  const [queryClient] = useState(() => createAppQueryClient())
   return (
-    <main style={{ padding: '24px 16px', paddingTop: 'calc(24px + env(safe-area-inset-top))' }}>
-      <h1 style={{ fontSize: 22, margin: 0 }}>家务计酬</h1>
-      <p style={{ color: '#667085' }}>正在准备应用…</p>
-    </main>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <SessionProvider>
+          <BootGate>
+            <AppRoutes />
+          </BootGate>
+        </SessionProvider>
+      </BrowserRouter>
+    </QueryClientProvider>
   )
 }
