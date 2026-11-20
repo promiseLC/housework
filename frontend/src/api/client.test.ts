@@ -1,17 +1,12 @@
 import { http, HttpResponse } from 'msw/http'
-import { setupServer } from 'msw/node'
-import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { apiRequest, configureApiClient } from './client'
 import { tokenStore } from '../auth/tokenStore'
+import { server } from '../test/server'
 
-const server = setupServer()
-
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }))
 afterEach(() => {
-  server.resetHandlers()
   tokenStore.clear()
 })
-afterAll(() => server.close())
 
 describe('apiRequest', () => {
   test('sends Idempotency-Key on state-changing posts but not on payment preview', async () => {

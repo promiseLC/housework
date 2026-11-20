@@ -1,4 +1,10 @@
 import '@testing-library/jest-dom/vitest'
+import { cleanup } from '@testing-library/react'
+import 'antd-mobile/es/global'
+import { afterAll, afterEach, beforeAll } from 'vitest'
+import { tokenStore } from '../auth/tokenStore'
+import { resetMockState } from './mockApi'
+import { server } from './server'
 
 class LocalStorageMock {
   private store = new Map<string, string>()
@@ -26,3 +32,33 @@ Object.defineProperty(globalThis, 'localStorage', {
   value: new LocalStorageMock(),
   configurable: true,
 })
+
+Object.defineProperty(window, 'matchMedia', {
+  writable: true,
+  value: (query: string) => ({
+    matches: false,
+    media: query,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+    dispatchEvent() {
+      return false
+    },
+  }),
+})
+
+Object.defineProperty(navigator, 'clipboard', {
+  configurable: true,
+  value: { writeText: async () => undefined },
+})
+
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
+afterEach(() => {
+  cleanup()
+  server.resetHandlers()
+  resetMockState()
+  tokenStore.clear()
+  localStorage.clear()
+})
+afterAll(() => server.close())
