@@ -1,10 +1,10 @@
-import { render, screen } from '@testing-library/react'
+import { screen } from '@testing-library/react'
 import { describe, expect, test } from 'vitest'
-import App from './App'
+import { renderApp } from './test/render'
 
-describe('App scaffold', () => {
-  test('renders the product name', () => {
-    render(<App />)
-    expect(screen.getByRole('heading', { name: '家务计酬' })).toBeInTheDocument()
+describe('app routes', () => {
+  test('shows login when signed out', async () => {
+    renderApp({ route: '/login' })
+    expect(await screen.findByRole('heading', { name: '登录' })).toBeInTheDocument()
   })
 })
