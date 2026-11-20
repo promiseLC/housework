@@ -11,3 +11,10 @@ def healthz():
     with engine.connect() as conn:
         conn.execute(text("SELECT 1"))
     return {"status": "ok"}
+
+from fastapi.middleware.cors import CORSMiddleware
+from app.core.config import settings
+from app.api import auth, households
+app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["GET", "POST", "PATCH", "DELETE"], allow_headers=["Authorization", "Content-Type", "Idempotency-Key"])
+app.include_router(auth.router, prefix="/api/v1")
+app.include_router(households.router, prefix="/api/v1")
