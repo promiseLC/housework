@@ -1,0 +1,1546 @@
+openapi: 3.0.3
+info:
+  title: Household Pay API
+  description: |
+    双人家务计酬首版接口契约。金额单位为分（整数）。
+    家庭范围写在路径中的 householdId，服务端必须校验当前登录用户是该家庭成员；
+    已解绑家庭只读。写资金或推进状态的 POST 必须带 Idempotency-Key。
+    不接第三方支付，不提供复杂冲正，不提供撤回确认、撤回已付款或撤销结清。
+  version: 0.1.2
+
+servers:
+  - url: /api/v1
+    description: 相对当前主机的 API 前缀
+
+tags:
+  - name: Auth
+  - name: Me
+  - name: Invites
+  - name: Households
+  - name: ChoreTypes
+  - name: Tasks
+  - name: Wages
+  - name: Payments
+  - name: Ledger
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      security: []
+      summary: 账号密码注册
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: 注册成功并返回令牌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokenResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: 登录
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokenResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      security: []
+      summary: 刷新访问令牌
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: 新令牌
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokenResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: 注销当前刷新令牌
+      operationId: logout
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '204':
+          description: 已注销
+
+  /me:
+    get:
+      tags: [Me]
+      summary: 当前用户及有效家庭
+      operationId: getMe
+      responses:
+        '200':
+          description: 当前用户
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /invites:
+    post:
+      tags: [Invites]
+      summary: 生成邀请码；若已有有效邀请则 409，需先作废或走重新生成
+      operationId: createInvite
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: 已创建待接受邀请，响应含可复制明文码
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteCreatedResponse'
+        '409':
+          description: 已绑定，或已有一条有效（pending 且未过期）邀请
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /invites/current:
+    get:
+      tags: [Invites]
+      summary: 查看我发出的当前邀请；pending 且未过期时返回明文码供再次复制
+      operationId: getCurrentInvite
+      responses:
+        '200':
+          description: 当前邀请，若无则为 invite=null；仅邀请人可看到明文码
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteStatusResponse'
+    delete:
+      tags: [Invites]
+      summary: 作废我发出的有效邀请（不作废后不自动生成新码）
+      operationId: cancelCurrentInvite
+      responses:
+        '204':
+          description: 已作废或本来没有
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /invites/regenerate:
+    post:
+      tags: [Invites]
+      summary: 作废当前有效邀请并生成新码，同一时间只保留一条有效邀请
+      operationId: regenerateInvite
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: 旧码已失效，返回新的明文码和到期时间
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteCreatedResponse'
+        '409':
+          description: 已绑定，或当前没有可作废的邀请（应改走创建）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /invites/accept:
+    post:
+      tags: [Invites]
+      summary: 接受邀请，创建两人家庭
+      operationId: acceptInvite
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptInviteRequest'
+      responses:
+        '201':
+          description: 家庭已生效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HouseholdDetail'
+        '409':
+          description: 已绑定、邀请已用、过期、邀请自己等
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /households:
+    get:
+      tags: [Households]
+      summary: 我加入过的家庭（含已解绑，供只读历史）
+      operationId: listHouseholds
+      responses:
+        '200':
+          description: 家庭列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HouseholdListResponse'
+
+  /households/{householdId}:
+    get:
+      tags: [Households]
+      summary: 家庭详情
+      operationId: getHousehold
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+      responses:
+        '200':
+          description: 详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HouseholdDetail'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /households/{householdId}/unbind:
+    post:
+      tags: [Households]
+      summary: 解绑；进行中/待确认/已拒绝任务或待付款/待收款确认工资均阻止（撤回为进行中后仍阻止）
+      operationId: unbindHousehold
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: 已解绑，历史只读
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HouseholdDetail'
+        '409':
+          description: 存在进行中、待确认、已拒绝任务，或待付款/待收款确认工资（含撤回后的进行中）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /households/{householdId}/chore-types:
+    get:
+      tags: [ChoreTypes]
+      summary: 家务模板列表
+      operationId: listChoreTypes
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - name: include_inactive
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: 模板列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChoreTypeListResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [ChoreTypes]
+      summary: 新建模板
+      operationId: createChoreType
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChoreTypeWriteRequest'
+      responses:
+        '201':
+          description: 已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChoreType'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /households/{householdId}/chore-types/{choreTypeId}:
+    patch:
+      tags: [ChoreTypes]
+      summary: 改名或改价（不影响已开始实例）
+      operationId: updateChoreType
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - $ref: '#/components/parameters/ChoreTypeId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChoreTypePatchRequest'
+      responses:
+        '200':
+          description: 已更新
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChoreType'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /households/{householdId}/chore-types/{choreTypeId}/deactivate:
+    post:
+      tags: [ChoreTypes]
+      summary: 停用模板（不可再开始新实例）
+      operationId: deactivateChoreType
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - $ref: '#/components/parameters/ChoreTypeId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: 已停用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChoreType'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /households/{householdId}/tasks:
+    get:
+      tags: [Tasks]
+      summary: 家务实例列表
+      operationId: listTasks
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/TaskStatus'
+        - name: role
+          in: query
+          description: worker=我做的；reviewer=待我或我已审核的对方任务
+          schema:
+            type: string
+            enum: [worker, reviewer]
+      responses:
+        '200':
+          description: 分页列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskListResponse'
+    post:
+      tags: [Tasks]
+      summary: 开始一次家务（锁定名称、单价、执行人、承担人）
+      operationId: startTask
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartTaskRequest'
+      responses:
+        '201':
+          description: 状态为进行中
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: 模板已停用或家庭已解绑
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /households/{householdId}/tasks/{taskId}:
+    get:
+      tags: [Tasks]
+      summary: 任务详情（含审核历史）
+      operationId: getTask
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: 详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /households/{householdId}/tasks/{taskId}/submit:
+    post:
+      tags: [Tasks]
+      summary: 提交完成（进行中或已拒绝可提交，拒绝后只可改说明）
+      operationId: submitTask
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - $ref: '#/components/parameters/TaskId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitTaskRequest'
+      responses:
+        '200':
+          description: 进入待确认，不生成工资
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDetail'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+
+  /households/{householdId}/tasks/{taskId}/withdraw:
+    post:
+      tags: [Tasks]
+      summary: 执行人将待确认任务撤回为进行中（不是撤销已确认或已拒绝）
+      operationId: withdrawTask
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - $ref: '#/components/parameters/TaskId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: 已回到进行中，快照不变，可再次提交或取消
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDetail'
+        '403':
+          description: 仅执行人可撤回，对方不能代撤
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 非待确认状态，或已与确认/拒绝并发冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /households/{householdId}/tasks/{taskId}/cancel:
+    post:
+      tags: [Tasks]
+      summary: 取消进行中的任务（仅执行人，仅进行中）
+      operationId: cancelTask
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - $ref: '#/components/parameters/TaskId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: 已取消
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /households/{householdId}/tasks/{taskId}/confirm:
+    post:
+      tags: [Tasks]
+      summary: 对方确认完工，事务内生成唯一工资
+      operationId: confirmTask
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - $ref: '#/components/parameters/TaskId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: 任务已确认并带上工资
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDetail'
+        '403':
+          description: 不能确认自己的任务
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /households/{householdId}/tasks/{taskId}/reject:
+    post:
+      tags: [Tasks]
+      summary: 对方拒绝完工（必须写原因，不生成工资）
+      operationId: rejectTask
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - $ref: '#/components/parameters/TaskId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RejectRequest'
+      responses:
+        '200':
+          description: 已拒绝，同一实例可改说明后重提
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDetail'
+        '403':
+          description: 不能审核自己的任务
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /households/{householdId}/wages:
+    get:
+      tags: [Wages]
+      summary: 工资列表
+      operationId: listWages
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/WageStatus'
+        - name: direction
+          in: query
+          description: receivable=我应收；payable=我应付
+          schema:
+            type: string
+            enum: [receivable, payable]
+      responses:
+        '200':
+          description: 分页列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WageListResponse'
+
+  /households/{householdId}/wages/{wageId}:
+    get:
+      tags: [Wages]
+      summary: 工资详情
+      operationId: getWage
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - $ref: '#/components/parameters/WageId'
+      responses:
+        '200':
+          description: 详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wage'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /households/{householdId}/payments:
+    get:
+      tags: [Payments]
+      summary: 结算单列表
+      operationId: listPayments
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/PaymentStatus'
+      responses:
+        '200':
+          description: 分页列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentListResponse'
+    post:
+      tags: [Payments]
+      summary: 勾选同方向整笔待付款工资，创建结算单并标记已付款（尚未结清）
+      operationId: createPayment
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePaymentRequest'
+      responses:
+        '201':
+          description: 结算单已创建，工资进入待收款确认
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentDetail'
+        '409':
+          description: 方向不一致、已被占用、非待付款或已结清
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+
+  /households/{householdId}/payments/preview:
+    post:
+      tags: [Payments]
+      summary: 付款前预览同方向整笔工资的对象、明细和合计；不占锁、不改状态
+      operationId: previewPayment
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePaymentRequest'
+      responses:
+        '200':
+          description: 预览成功，可供提交前核对；随后创建仍可能因并发占用失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentPreview'
+        '409':
+          description: 方向不一致、非待付款、已被结算占用或已结清，预览失败且不写库
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /households/{householdId}/payments/{paymentId}:
+    get:
+      tags: [Payments]
+      summary: 结算单详情
+      operationId: getPayment
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - $ref: '#/components/parameters/PaymentId'
+      responses:
+        '200':
+          description: 详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /households/{householdId}/payments/{paymentId}/confirm-received:
+    post:
+      tags: [Payments]
+      summary: 收款人确认到账，结算单与工资本同一事务结清
+      operationId: confirmPaymentReceived
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - $ref: '#/components/parameters/PaymentId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: 已结清
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentDetail'
+        '403':
+          description: 付款人不能代收款人确认
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /households/{householdId}/payments/{paymentId}/reject-received:
+    post:
+      tags: [Payments]
+      summary: 收款人未到账，拒绝并写原因；保留结算单，工资回到待付款
+      operationId: rejectPaymentReceived
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+        - $ref: '#/components/parameters/PaymentId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RejectRequest'
+      responses:
+        '200':
+          description: 结算单保留为已拒绝
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentDetail'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /households/{householdId}/ledger/summary:
+    get:
+      tags: [Ledger]
+      summary: 账本汇总（双向独立，不抵扣）
+      operationId: getLedgerSummary
+      parameters:
+        - $ref: '#/components/parameters/HouseholdId'
+      responses:
+        '200':
+          description: 汇总
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LedgerSummary'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    HouseholdId:
+      name: householdId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ChoreTypeId:
+      name: choreTypeId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TaskId:
+      name: taskId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    WageId:
+      name: wageId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PaymentId:
+      name: paymentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: page_size
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: 客户端生成的幂等键。相同键重试返回首次结果；相同键不同请求体返回 409 IDEMPOTENCY_CONFLICT。
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 64
+
+  responses:
+    Unauthorized:
+      description: 未登录或令牌无效
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: 已登录但无权限（非成员、越权或不能操作自己的单）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: 资源不存在或不在当前用户可见家庭内（避免泄露）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: 状态不允许或唯一约束冲突
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ValidationError:
+      description: 参数校验失败
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: |
+                常见码：UNAUTHORIZED, FORBIDDEN, NOT_FOUND, VALIDATION_ERROR, CONFLICT,
+                IDEMPOTENCY_CONFLICT, USERNAME_TAKEN, ALREADY_BOUND, INVITE_EXPIRED,
+                INVITE_USED, INVITE_CANCELLED, CANNOT_INVITE_SELF, PARTNER_ALREADY_BOUND,
+                UNBIND_BLOCKED, HOUSEHOLD_DISSOLVED, CHORE_TYPE_INACTIVE,
+                TASK_INVALID_STATE, CANNOT_REVIEW_OWN_TASK, CANNOT_WITHDRAW_OTHERS_TASK, WAGE_NOT_PAYABLE,
+                WAGE_ALREADY_LOCKED, WAGES_DIRECTION_MISMATCH, PAYMENT_INVALID_STATE,
+                CANNOT_CONFIRM_OWN_PAYMENT。
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+
+    RegisterRequest:
+      type: object
+      required: [username, password, display_name]
+      properties:
+        username:
+          type: string
+          minLength: 2
+          maxLength: 32
+          pattern: '^[A-Za-z0-9_\u4e00-\u9fff]{2,32}$'
+          description: 用户自设唯一登录名，不要求手机号或邮箱；允许字母、数字、下划线和中文，不含空格。
+          example: 'xiao_ming'
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 20
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 2
+          maxLength: 32
+        password:
+          type: string
+
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+
+    AuthTokenResponse:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in, user]
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+          enum: [bearer]
+        expires_in:
+          type: integer
+          description: 访问令牌有效秒数
+        user:
+          $ref: '#/components/schemas/UserPublic'
+
+    UserPublic:
+      type: object
+      required: [id, username, display_name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        display_name:
+          type: string
+
+    MeResponse:
+      type: object
+      required: [user, active_household]
+      properties:
+        user:
+          $ref: '#/components/schemas/UserPublic'
+        active_household:
+          allOf:
+            - $ref: '#/components/schemas/HouseholdSummary'
+          nullable: true
+
+    InviteCreatedResponse:
+      type: object
+      required: [id, code, expires_at, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          description: 明文邀请码，供邀请人复制；创建与重新生成时必有
+          example: '7K2P9Q'
+        expires_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [pending]
+
+    InviteStatusResponse:
+      type: object
+      required: [invite]
+      properties:
+        invite:
+          allOf:
+            - $ref: '#/components/schemas/InvitePublic'
+          nullable: true
+
+    InvitePublic:
+      type: object
+      required: [id, status, expires_at, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          nullable: true
+          description: 仅当 status=pending 且未过期时返回明文，供邀请人再次复制；否则为 null
+          example: '7K2P9Q'
+        status:
+          type: string
+          enum: [pending, accepted, expired, cancelled]
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    AcceptInviteRequest:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          minLength: 6
+          maxLength: 16
+
+    HouseholdSummary:
+      type: object
+      required: [id, status, created_at, members]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/HouseholdStatus'
+        created_at:
+          type: string
+          format: date-time
+        dissolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/HouseholdMember'
+
+    HouseholdDetail:
+      allOf:
+        - $ref: '#/components/schemas/HouseholdSummary'
+
+    HouseholdListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/HouseholdSummary'
+
+    HouseholdMember:
+      type: object
+      required: [user_id, display_name, joined_at]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        joined_at:
+          type: string
+          format: date-time
+        left_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    HouseholdStatus:
+      type: string
+      enum: [active, dissolved]
+
+    ChoreTypeWriteRequest:
+      type: object
+      required: [name, unit_price_fen]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 40
+        unit_price_fen:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: 单价，单位分
+
+    ChoreTypePatchRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 40
+        unit_price_fen:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+
+    ChoreType:
+      type: object
+      required: [id, household_id, name, unit_price_fen, is_active, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        household_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        unit_price_fen:
+          type: integer
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ChoreTypeListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoreType'
+
+    StartTaskRequest:
+      type: object
+      required: [chore_type_id]
+      properties:
+        chore_type_id:
+          type: string
+          format: uuid
+
+    SubmitTaskRequest:
+      type: object
+      properties:
+        note:
+          type: string
+          maxLength: 200
+
+    RejectRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 200
+
+    TaskStatus:
+      type: string
+      enum: [in_progress, pending_confirm, rejected, confirmed, cancelled]
+      description: 进行中 / 待确认 / 已拒绝 / 已确认 / 已取消
+
+    Task:
+      type: object
+      required:
+        - id
+        - household_id
+        - chore_type_id
+        - name_snapshot
+        - unit_price_fen_snapshot
+        - worker_user_id
+        - payer_user_id
+        - status
+        - started_at
+        - version
+      properties:
+        id:
+          type: string
+          format: uuid
+        household_id:
+          type: string
+          format: uuid
+        chore_type_id:
+          type: string
+          format: uuid
+        name_snapshot:
+          type: string
+        unit_price_fen_snapshot:
+          type: integer
+        worker_user_id:
+          type: string
+          format: uuid
+        payer_user_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        note:
+          type: string
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+        submitted_at:
+          type: string
+          format: date-time
+          nullable: true
+        cancelled_at:
+          type: string
+          format: date-time
+          nullable: true
+        confirmed_at:
+          type: string
+          format: date-time
+          nullable: true
+        rejected_at:
+          type: string
+          format: date-time
+          nullable: true
+        reject_reason:
+          type: string
+          nullable: true
+        version:
+          type: integer
+        wage:
+          allOf:
+            - $ref: '#/components/schemas/Wage'
+          nullable: true
+
+    TaskReviewEvent:
+      type: object
+      required: [id, task_id, actor_user_id, action, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        task_id:
+          type: string
+          format: uuid
+        actor_user_id:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum: [submit, withdraw, confirm, reject]
+        reason:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    TaskDetail:
+      allOf:
+        - $ref: '#/components/schemas/Task'
+        - type: object
+          required: [review_events]
+          properties:
+            review_events:
+              type: array
+              items:
+                $ref: '#/components/schemas/TaskReviewEvent'
+
+    TaskListResponse:
+      type: object
+      required: [items, page, page_size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+
+    WageStatus:
+      type: string
+      enum: [payable, awaiting_receipt, settled]
+      description: 待付款 / 待收款确认 / 已结清
+
+    Wage:
+      type: object
+      required:
+        - id
+        - household_id
+        - task_id
+        - amount_fen
+        - worker_user_id
+        - payer_user_id
+        - status
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        household_id:
+          type: string
+          format: uuid
+        task_id:
+          type: string
+          format: uuid
+        chore_name:
+          type: string
+        amount_fen:
+          type: integer
+        worker_user_id:
+          type: string
+          format: uuid
+        payer_user_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/WageStatus'
+        locked_payment_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        settled_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    WageListResponse:
+      type: object
+      required: [items, page, page_size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Wage'
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+
+    CreatePaymentRequest:
+      type: object
+      required: [wage_ids]
+      properties:
+        wage_ids:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uuid
+          description: 同方向、整笔、当前为待付款且未被占用的工资 ID
+
+    PaymentPreview:
+      type: object
+      required: [payer, payee, items, total_amount_fen, wage_count]
+      properties:
+        payer:
+          $ref: '#/components/schemas/UserPublic'
+        payee:
+          $ref: '#/components/schemas/UserPublic'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaymentItem'
+        total_amount_fen:
+          type: integer
+          description: 各整笔工资金额之和，单位分
+        wage_count:
+          type: integer
+      description: 付款前提交核对用。预览不加锁、不写库、不改变工资或结算状态。
+
+    PaymentStatus:
+      type: string
+      enum: [awaiting_receipt, settled, rejected]
+      description: 待收款确认 / 已结清 / 已拒绝（单据保留，工资已释放）
+
+    Payment:
+      type: object
+      required:
+        - id
+        - household_id
+        - payer_user_id
+        - payee_user_id
+        - total_amount_fen
+        - status
+        - marked_paid_at
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        household_id:
+          type: string
+          format: uuid
+        payer_user_id:
+          type: string
+          format: uuid
+        payee_user_id:
+          type: string
+          format: uuid
+        total_amount_fen:
+          type: integer
+        status:
+          $ref: '#/components/schemas/PaymentStatus'
+        reject_reason:
+          type: string
+          nullable: true
+        marked_paid_at:
+          type: string
+          format: date-time
+        settled_at:
+          type: string
+          format: date-time
+          nullable: true
+        rejected_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    PaymentItem:
+      type: object
+      required: [wage_id, amount_fen]
+      properties:
+        wage_id:
+          type: string
+          format: uuid
+        amount_fen:
+          type: integer
+        chore_name:
+          type: string
+        task_id:
+          type: string
+          format: uuid
+
+    PaymentDetail:
+      allOf:
+        - $ref: '#/components/schemas/Payment'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/PaymentItem'
+
+    PaymentListResponse:
+      type: object
+      required: [items, page, page_size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Payment'
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+
+    LedgerSummary:
+      type: object
+      required:
+        - household_id
+        - household_status
+        - me
+        - partner
+        - pending_confirm_as_reviewer_count
+        - pending_confirm_as_worker_count
+        - payable_to_me_fen
+        - payable_by_me_fen
+        - awaiting_my_receipt_fen
+        - awaiting_partner_receipt_fen
+        - settled_to_me_fen
+        - settled_by_me_fen
+      properties:
+        household_id:
+          type: string
+          format: uuid
+        household_status:
+          $ref: '#/components/schemas/HouseholdStatus'
+        me:
+          $ref: '#/components/schemas/UserPublic'
+        partner:
+          allOf:
+            - $ref: '#/components/schemas/UserPublic'
+          nullable: true
+          description: 解绑后仍返回对方当时资料
+        pending_confirm_as_reviewer_count:
+          type: integer
+          description: 待我审核的完工提交
+        pending_confirm_as_worker_count:
+          type: integer
+          description: 我已提交、待对方审核
+        in_progress_count:
+          type: integer
+        payable_to_me_fen:
+          type: integer
+          description: 对方应付给我、尚未进入结算或未结清中的待付款合计；与下方待收款分开计，避免重复加总时请按状态分列使用
+        payable_by_me_fen:
+          type: integer
+        awaiting_my_receipt_fen:
+          type: integer
+          description: 对方已标付款、待我确认收款
+        awaiting_partner_receipt_fen:
+          type: integer
+          description: 我已标付款、待对方确认收款
+        settled_to_me_fen:
+          type: integer
+        settled_by_me_fen:
+          type: integer
+      description: |
+        应收应付独立展示，不做净额或补差。
+        payable_* 仅含 status=payable 的工资；awaiting_* 仅含 status=awaiting_receipt。
